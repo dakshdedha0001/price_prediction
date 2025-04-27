@@ -1,95 +1,98 @@
-# 📌 Required Libraries
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.neural_network import MLPRegressor
 import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.cluster import KMeans
+from xgboost import XGBRegressor
+from sklearn.neural_network import MLPRegressor
 
-# 📌 Step 1: Load Dataset
-@st.cache_data
-def load_data():
-    df = pd.read_csv("Price_Agriculture_commodities_Week.csv")
-    df["Arrival_Date"] = pd.to_datetime(df["Arrival_Date"])
-    df["Year"] = df["Arrival_Date"].dt.year
-    df["Month"] = df["Arrival_Date"].dt.month
-    df["Day"] = df["Arrival_Date"].dt.day
-    return df
+# Title
+st.title("Agri-Horticultural Commodities Price Prediction (Onion, Potato, etc.)")
 
-# 📌 Step 2: Train models for each commodity
-@st.cache_resource
-def train_models(df):
-    features = ["Year", "Month", "Day", "Min Price", "Max Price"]
-    target = "Modal Price"
+# Load Data
+data = pd.read_csv("Price_Agriculture_commodities_Week.csv")
 
-    commodity_models = {}
-    commodity_scalers = {}
+# Select Commodity
+commodity_list = data['Commodity'].unique()
+selected_commodity = st.selectbox("Select a Commodity:", commodity_list)
 
-    for commodity in df["Commodity"].unique():
-        df_commodity = df[df["Commodity"] == commodity]
-        X = df_commodity[features]
-        y = df_commodity[target]
+# Filter based on selection
+df = data[data['Commodity'] == selected_commodity]
 
-        scaler = MinMaxScaler()
-        X_scaled = scaler.fit_transform(X)
+# Date Features
+df['Arrival_Date'] = pd.to_datetime(df['Arrival_Date'])
+df['Year'] = df['Arrival_Date'].dt.year
+df['Month'] = df['Arrival_Date'].dt.month
+df['Day'] = df['Arrival_Date'].dt.day
 
-        model = MLPRegressor(hidden_layer_sizes=(128, 64, 32), activation='relu', max_iter=1000, random_state=42)
-        model.fit(X_scaled, y)
+# Features and Target
+features = ['Year', 'Month', 'Day', 'Min Price', 'Max Price']
+target = 'Modal Price'
+X = df[features]
+y = df[target]
 
-        commodity_models[commodity] = model
-        commodity_scalers[commodity] = scaler
+# Scaling
+scaler = MinMaxScaler()
+X_scaled = scaler.fit_transform(X)
 
-    return commodity_models, commodity_scalers
+# Clustering (KMeans)
+kmeans = KMeans(n_clusters=3, random_state=42)
+df['Cluster'] = kmeans.fit_predict(X_scaled)
 
-# 📌 Main App
-def main():
-    st.title("🌾 Agri-Horticultural Commodity Price Prediction")
-    st.subheader("Developed using ULNN (MLP Neural Network)")
+# Show Clusters
+st.subheader("Cluster Analysis")
+st.write(df[['Year', 'Month', 'Day', 'Min Price', 'Max Price', 'Cluster']])
 
-    df = load_data()
-    commodity_models, commodity_scalers = train_models(df)
+# Train-Test Split
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-    st.sidebar.header("Select Inputs")
+# Models
+xgb_model = XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=5)
+xgb_model.fit(X_train, y_train)
+mlp_model = MLPRegressor(hidden_layer_sizes=(64, 32, 16), activation='relu', max_iter=500)
+mlp_model.fit(X_train, y_train)
 
-    commodities = sorted(df["Commodity"].unique())
-    selected_commodity = st.sidebar.selectbox("Select Commodity", commodities)
+# Predictions
+y_pred_xgb = xgb_model.predict(X_test)
+y_pred_mlp = mlp_model.predict(X_test)
 
-    year = st.sidebar.number_input("Enter Year (2024-2030)", min_value=2024, max_value=2030, value=2024)
-    month = st.sidebar.number_input("Enter Month (1-12)", min_value=1, max_value=12, value=1)
-    day = st.sidebar.number_input("Enter Day (1-31)", min_value=1, max_value=31, value=1)
-    min_price = st.sidebar.number_input("Enter Estimated Min Price", min_value=0.0, value=10.0)
-    max_price = st.sidebar.number_input("Enter Estimated Max Price", min_value=0.0, value=20.0)
+# Evaluation
+rmse_xgb = np.sqrt(mean_squared_error(y_test, y_pred_xgb))
+r2_xgb = r2_score(y_test, y_pred_xgb)
+rmse_mlp = np.sqrt(mean_squared_error(y_test, y_pred_mlp))
+r2_mlp = r2_score(y_test, y_pred_mlp)
 
-    if st.sidebar.button("Predict Price"):
-        input_data = np.array([[year, month, day, min_price, max_price]])
-        scaler = commodity_scalers[selected_commodity]
-        input_scaled = scaler.transform(input_data)
+st.subheader("Model Evaluation Results")
+st.write(f"XGBoost Model: RMSE = {rmse_xgb:.2f}, R² = {r2_xgb:.2f}")
+st.write(f"MLP (ULNN) Model: RMSE = {rmse_mlp:.2f}, R² = {r2_mlp:.2f}")
 
-        model = commodity_models[selected_commodity]
-        predicted_price = model.predict(input_scaled)[0]
+# Visualization
+st.subheader("Prediction Comparison")
+fig, ax = plt.subplots()
+ax.scatter(y_test, y_pred_xgb, color='blue', alpha=0.5, label='XGBoost Predictions')
+ax.scatter(y_test, y_pred_mlp, color='red', alpha=0.5, label='MLP Predictions')
+ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'k--')
+ax.set_xlabel('Actual Price')
+ax.set_ylabel('Predicted Price')
+ax.legend()
+ax.grid(True)
+st.pyplot(fig)
 
-        st.success(f"🔮 Predicted Modal Price for **{selected_commodity}**: ₹{predicted_price:.2f}")
+# Future Prediction
+st.subheader("Predict Future Price")
+year = st.number_input("Enter Year (2024-2030):", min_value=2024, max_value=2030, step=1)
+month = st.number_input("Enter Month (1-12):", min_value=1, max_value=12, step=1)
+day = st.number_input("Enter Day (1-31):", min_value=1, max_value=31, step=1)
+min_price = st.number_input("Enter Min Price:")
+max_price = st.number_input("Enter Max Price:")
 
-        # 📈 Visualization
-        st.subheader("Model Performance Visualization")
-        df_commodity = df[df["Commodity"] == selected_commodity]
-        X = df_commodity[["Year", "Month", "Day", "Min Price", "Max Price"]]
-        y = df_commodity["Modal Price"]
-        X_scaled = scaler.transform(X)
-        y_pred = model.predict(X_scaled)
+if st.button("Predict"):
+    input_data = scaler.transform([[year, month, day, min_price, max_price]])
+    xgb_price = xgb_model.predict(input_data)[0]
+    mlp_price = mlp_model.predict(input_data)[0]
+    st.success(f"🔮 XGBoost Predicted Price: ₹{xgb_price:.2f}")
+    st.success(f"🔮 MLP (ULNN) Predicted Price: ₹{mlp_price:.2f}")
 
-        plt.figure(figsize=(8, 5))
-        plt.scatter(y, y_pred, color='green', alpha=0.5)
-        plt.plot([y.min(), y.max()], [y.min(), y.max()], 'k--')
-        plt.xlabel("Actual Modal Price")
-        plt.ylabel("Predicted Modal Price")
-        plt.title(f"Prediction Performance: {selected_commodity}")
-        plt.grid(True)
-        st.pyplot(plt)
-
-    st.write("---")
-    st.write("📚 **Project:** Development of AI-ML based models for predicting prices of agri-horticultural commodities such as pulses and vegetables (onion, potato, etc.)")
-    st.write("👨‍💻 **Developed Using:** Unsupervised Learning + Neural Networks")
-
-if __name__ == "__main__":
-    main()
